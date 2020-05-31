@@ -1,47 +1,51 @@
 #!/usr/bin/env python3
 
-import os
-import time
-import json
 import cv2
 import face_recognition
-import pickle
+from services.encodingService import getRegisteredEncodings, registerEncoding
 
-KNOWN_FACES_DIR = 'known_faces'
 TOLERANCE = 0.6
 MODEL = 'cnn'
 OPTIMIZATION_FACTOR = 4
 
 next_id = 0
 
-def getRegisteredEncodings():
-    known_faces = []
-    known_names = []
+class Trail:
+    def __init__(self, fn):
+        self.fn = fn
+        self.lastArgs = []
 
-    ids = None
-    with open('ids.json') as f:
-        ids = json.load(f)
+    def __call__(self, *args):
+        if not args[1]:
+            self.fn(args[0], self.lastArgs)
+            self.lastArgs = []
+            return None
+        self.lastArgs = args[1]
+        self.fn(*args)
 
-    for name in os.listdir(KNOWN_FACES_DIR):
-        for filename in os.listdir(f'{KNOWN_FACES_DIR}/{name}'):
-            filePath = f'{KNOWN_FACES_DIR}/{name}/{filename}'
-            print(f'loading {filePath}')
+@Trail
+def draw(frame, identifications):
+    for identification in identifications:
+        top = identification['top'] * OPTIMIZATION_FACTOR
+        right = identification['right'] * OPTIMIZATION_FACTOR
+        bottom = identification['bottom'] * OPTIMIZATION_FACTOR
+        left = identification['left'] * OPTIMIZATION_FACTOR
+        name = identification['name']
 
-            encoding = pickle.load(open(filePath, 'rb'))
-            known_faces.append(encoding)
-            if ids and name in ids:
-                known_names.append(ids[name])
-            else:
-                known_names.append(name)
+        color = (0,0,255)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        frame_thickness = 2
+        font_thickness = 1
 
-    return known_names, known_faces
+        cv2.rectangle(frame, (left, top), (right, bottom), color, frame_thickness)
 
-def registerEncoding(name, encoding):
-    path = f'{KNOWN_FACES_DIR}/{name}'
-    os.mkdir(path)
-    pickle.dump(encoding, open(f'{path}/{name}-{int(time.time())}.pkl', 'wb'))
+        cv2.rectangle(frame, (left, bottom - 35), (right, bottom), color, cv2.FILLED)
+        cv2.putText(frame, name, (left + 6, bottom - 6), font, 1.0, (255, 255, 255), font_thickness)
 
-def drawFaceIdentifications(frame, faces):
+    cv2.imshow('capture', frame)
+
+def getIdentifications(frame, faces):
+    identifications = []
     for face_encoding, (top, right, bottom, left) in faces:
         results = face_recognition.compare_faces(known_faces, face_encoding, TOLERANCE)
 
@@ -57,22 +61,17 @@ def drawFaceIdentifications(frame, faces):
             registerEncoding(match, face_encoding)
             next_id += 1
 
-        top *= OPTIMIZATION_FACTOR
-        right *= OPTIMIZATION_FACTOR
-        bottom *= OPTIMIZATION_FACTOR
-        left *= OPTIMIZATION_FACTOR
+        identifications.append({
+            'top': top,
+            'right': right,
+            'bottom': bottom,
+            'left': left,
+            'name': match
+        })
 
-        color = (0,0,255)
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        frame_thickness = 2
-        font_thickness = 1
+    return identifications
 
-        cv2.rectangle(frame, (left, top), (right, bottom), color, frame_thickness)
-
-        cv2.rectangle(frame, (left, bottom - 35), (right, bottom), color, cv2.FILLED)
-        cv2.putText(frame, match, (left + 6, bottom - 6), font, 1.0, (255, 255, 255), font_thickness)
-
-def identify():
+def run():
     video = cv2.VideoCapture(0)
 
     # this is for processiong identification optimization
@@ -84,16 +83,17 @@ def identify():
 
         small_frame = cv2.resize(frame, (0, 0), fx=1/OPTIMIZATION_FACTOR, fy=1/OPTIMIZATION_FACTOR)
 
+        identifications = []
         if(should_process):
             locations = face_recognition.face_locations(small_frame, model=MODEL)
             encodings = face_recognition.face_encodings(small_frame, locations)
 
             print(f'found {len(encodings)} face(s)')
             if(len(encodings)):
-                drawFaceIdentifications(frame, zip(encodings, locations))
+                identifications = getIdentifications(frame, zip(encodings, locations))
         should_process = not should_process
 
-        cv2.imshow('capture', frame)
+        draw(frame, identifications)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
@@ -104,4 +104,4 @@ def identify():
 if __name__ == "__main__":
     known_names, known_faces = getRegisteredEncodings()
     next_id = len(known_names)
-    identify()
+    run()
