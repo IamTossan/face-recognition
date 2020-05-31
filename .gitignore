@@ -1,0 +1,5 @@
+venv/
+known_faces/
+__pycache__/
+
+ids.json
